@@ -1,0 +1,85 @@
+<?php
+
+require_once(DRUPAL_ROOT . '/' . drupal_get_path('module', 'pushover') . '/lib/Pushover/Pushover.php');
+
+/**
+ * Helper function that returns a pushable object using the Pushover class
+ *
+ * @param $vars
+ * @return bool|Pushover
+ */
+function pushover_get_pushable($vars) {
+  global $conf;
+  if (isset($conf['pushover_credentials'])) {
+    $push = new Pushover();
+    $push->setToken($conf['pushover_credentials']['app_token']);
+    $push->setUser($conf['pushover_credentials']['user_token']);
+    $push->setTitle($vars['title']);
+    $push->setMessage($vars['message']);
+    if (isset($vars['url'])) {
+      $push->setUrl($vars['url']);
+    }
+    if (isset($vars['device'])) {
+      $push->setDevice($vars['device']);
+    }
+    $push->setTimestamp(time());
+
+    return $push;
+  }
+  else {
+    return FALSE;
+  }
+}
+
+/**
+ * Implements hook_comment_insert().
+ */
+function pushover_comment_insert($comment) {
+
+  // Send a push notification if a new comment is created by an anonymous user
+  // and it is not yet published.
+  if ($comment->status == 0 && $comment->is_anonymous == TRUE) {
+    global $base_url;
+    $vars = array(
+      'title' => 'New comment on ' . variable_get('site_name') . '!',
+      'message' => 'Subject: ' . $comment->subject,
+      'url' => $base_url . '/node/' . $comment->nid . '#comment-' . $comment->cid,
+      'device' => 'Nexus'
+    );
+    $pushable = pushover_get_pushable($vars);
+    if ($pushable) {
+      $pushed = $pushable->send();
+      if ($pushed == false) {
+        watchdog('Pushover', t('A comment has been created but there was an error pushing that over.'), array(), WATCHDOG_ERROR, NULL);
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_user_login().
+ */
+function pushover_user_login(&$edit, $account) {
+  // If the admin user logs in, send a push notification.
+  if ($account->uid == 1) {
+    $whitelist = array('1.1.1.1');
+    if (!in_array(ip_address(), $whitelist)) {
+      global $base_url;
+      $vars = array(
+        'title' => 'Admin user sign in',
+        'message' => 'Admin user has logged into this site: ' . variable_get('site_name') . '!',
+        'url' => $base_url,
+      );
+      $pushable = pushover_get_pushable($vars);
+      if ($pushable) {
+        $pushable->setPriority(2);
+        $pushable->setRetry(30);
+        $pushable->setExpire(60);
+        $pushed = $pushable->send();
+        if ($pushed == false) {
+          watchdog('Pushover', t('An admin user has logged into the site but there was an error pushing this over.'), array(), WATCHDOG_ERROR, NULL);
+        }
+      }
+    }
+  }
+}
